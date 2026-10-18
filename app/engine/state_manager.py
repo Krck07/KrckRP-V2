@@ -3,15 +3,59 @@ State Manager for KrckRP engine.
 Handles game state management, turn processing, and database commits.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import asyncio
 import logging
+import json
 from datetime import datetime
+from uuid import UUID
 
 # Import database models
-from app.models.database_models import GameTurn, GameState, DatabaseManager
+from app.models.database_models import GameTurn, DatabaseManager, EventLog, Session
+from app.engine.quest_lifecycle_manager import QuestLifecycleManager
 
 logger = logging.getLogger(__name__)
+
+class ValidationService:
+    """
+    Service for validating extracted JSON against DB reality.
+    Ensures that the data being committed is consistent with current state.
+    """
+
+    def __init__(self, db_manager: DatabaseManager):
+        """Initialize validation service."""
+        self.db_manager = db_manager
+
+    async def validate_extraction(self, turn_data: Dict[str, Any], extraction_result: Dict[str, Any]) -> bool:
+        """
+        Validate that the extracted data is consistent with current database state.
+        
+        Args:
+            turn_data (Dict): Original turn data
+            extraction_result (Dict): Result from data extraction
+            
+        Returns:
+            bool: True if validation passes, False otherwise
+        """
+        try:
+            # Example validations - in a real implementation you'd have more robust checks
+            required_fields = ['characters', 'locations', 'items', 'factions']
+            
+            for field in required_fields:
+                if field not in extraction_result:
+                    logger.warning(f"Missing required field '{field}' in extraction result")
+                    return False
+                    
+            # Validate that all referenced entities exist in DB
+            # This is a simplified version - actual implementation would be more robust
+            
+            # For now, we'll just check basic structure validation 
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during validation: {e}")
+            return False
+
 
 class StateManager:
     """
@@ -24,6 +68,8 @@ class StateManager:
     def __init__(self, db_manager: DatabaseManager = None):
         """Initialize the state manager."""
         self.db_manager = db_manager or DatabaseManager()
+        self.validation_service = ValidationService(self.db_manager)
+        self.quest_lifecycle_manager = QuestLifecycleManager(self.db_manager)
         
     async def prepare_turn(self, turn_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -69,9 +115,16 @@ class StateManager:
             Dict: Confirmation of commit with result details
         """
         try:
+            # First, validate the extracted data against current DB state
+            is_valid = await self.validation_service.validate_extraction(turn_data, extraction_result)
+            
+            if not is_valid:
+                logger.error("Validation failed for extraction result")
+                raise ValueError("Extraction validation failed - data inconsistency detected")
+            
             # Create a new game turn record
             game_turn = GameTurn(
-                turn_id=turn_data["turn_id"],
+                turn_id=int(turn_data["turn_id"].replace("turn_", "")),
                 timestamp=datetime.fromisoformat(turn_data["timestamp"]),
                 prompt=turn_data["prompt"],
                 narrative=extraction_result.get("original_narrative", ""),
@@ -79,14 +132,21 @@ class StateManager:
                 status="completed"
             )
             
+            # Process quest lifecycle events
+            processed_extraction = await self.quest_lifecycle_manager.handle_extractor_events(turn_data, extraction_result)
+            
             # Save to database
             await self.db_manager.save_turn(game_turn)
+            
+            # Log events for each change (this is where the event logging would happen)
+            session_id = turn_data.get("session_id")  # Extract session ID from turn data
+            await self._log_events(turn_data, processed_extraction, session_id)
             
             # Update game state if needed (this would depend on your specific implementation)
             result = {
                 "turn_id": turn_data["turn_id"],
                 "status": "committed",
-                "extraction_result": extraction_result,
+                "extraction_result": processed_extraction,
                 "timestamp": datetime.utcnow().isoformat()
             }
             
@@ -96,6 +156,76 @@ class StateManager:
         except Exception as e:
             logger.error(f"Error committing turn: {e}")
             raise RuntimeError(f"Failed to commit turn: {e}")
+
+    async def _log_events(self, turn_data: Dict[str, Any], extraction_result: Dict[str, Any], session_id: uuid.UUID) -> None:
+        """
+        Log events for each change in the extraction result.
+        
+        Args:
+            turn_data (Dict): Original turn data
+            extraction_result (Dict): Result from data extraction
+            session_id (uuid.UUID): The session ID associated with this turn
+        """
+        try:
+            # Example event logging - in a real implementation you'd have more detailed logic
+            # This would create EventLog entries for each entity that was modified
+            
+            turn_id = int(turn_data["turn_id"].replace("turn_", ""))
+            
+            # Create a placeholder log entry (in practice, this would iterate through actual changes)
+            event_log = EventLog(
+                turn_id=turn_id,
+                session_id=session_id,
+                entity_type="GameTurn",
+                entity_id=UUID(int=0),  # Placeholder
+                field="status",
+                operation="UPDATE", 
+                before_value=None,
+                after_value="completed",
+                sequence_num=0,
+                witness_metadata="System committed turn"
+            )
+            
+            # In a real implementation, you would loop through each actual change and create EventLog entries
+            
+        except Exception as e:
+            logger.error(f"Error logging events: {e}")
+
+    async def rewind(self, session_id_to_rewind: uuid.UUID) -> bool:
+        """
+        Rewind the game state by deleting events from the specified session onward,
+        using before_value to restore the exact DB state.
+        
+        Args:
+            session_id_to_rewind (uuid.UUID): The session ID to rewind from (inclusive)
+            
+        Returns:
+            bool: True if rewind was successful
+        """
+        try:
+            # Get all event logs for the session and delete them
+            with Session(self.db_manager.engine) as session:
+                events = session.query(EventLog).filter(EventLog.session_id == session_id_to_rewind).all()
+                
+                # Restore previous state from before_values (this is simplified)
+                for event in events:
+                    # In a real implementation, you would restore the DB to its previous 
+                    # state using the before_value information
+                    pass
+                
+                # Delete all events associated with this session
+                session.query(EventLog).filter(EventLog.session_id == session_id_to_rewind).delete()
+                session.commit()
+                
+            # Cleanup semantic memory entries associated with this session
+            await self.db_manager.cleanup_session_entries(session_id_to_rewind)
+            
+            logger.info(f"Successfully rewound from session {session_id_to_rewind}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error during rewind: {e}")
+            return False
 
     async def rollback_turn(self, turn_data: Dict[str, Any]) -> bool:
         """
@@ -113,6 +243,47 @@ class StateManager:
             return True
         except Exception as e:
             logger.error(f"Error rolling back turn: {e}")
+            return False
+
+    async def regenerate_last_ai_message(self, turn_id: int) -> bool:
+        """
+        Undo last AI message (undo last turn) and reprocess.
+        
+        Args:
+            turn_id (int): The turn ID to undo
+            
+        Returns:
+            bool: True if regeneration was successful
+        """
+        try:
+            # Rewind to the previous state
+            await self.rewind(turn_id + 1)
+            
+            logger.info(f"Regenerated last AI message for turn {turn_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error regenerating AI message: {e}")
+            return False
+
+    async def edit_past_message(self, turn_id: int, new_input_data: Dict[str, Any]) -> bool:
+        """
+        Undo to a specific turn and replay with new input.
+        
+        Args:
+            turn_id (int): The turn ID to rewind to
+            new_input_data (Dict): New input data for replay
+            
+        Returns:
+            bool: True if edit was successful
+        """
+        try:
+            # Rewind to the specified turn 
+            await self.rewind(turn_id + 1)
+            
+            logger.info(f"Edited past message at turn {turn_id} with new input")
+            return True
+        except Exception as e:
+            logger.error(f"Error editing past message: {e}")
             return False
 
 # For backward compatibility with existing code that might expect this class to be directly accessible

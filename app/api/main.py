@@ -4,16 +4,18 @@ Handles game turns and streaming responses via SSE.
 """
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import asyncio
 import json
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List, Optional
 from contextlib import asynccontextmanager
+import uuid
 
 # Import our custom modules
 from app.llm.kobold_cpp_client import KoboldCppClient
 from app.llm.extractor import Extractor
-from app.models.database_models import GameTurn, DatabaseManager
+from app.models.database_models import GameTurn, DatabaseManager, Campaign, Character, Location, Item, Quest
 from app.engine.state_manager import StateManager
 import logging
 
@@ -143,6 +145,141 @@ async def health_check():
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return {"status": "unhealthy", "error": str(e)}
+
+# Campaign management endpoints
+@app.get("/campaigns")
+async def list_campaigns():
+    """Get all campaigns"""
+    try:
+        db_manager = DatabaseManager()
+        campaigns = db_manager.get_all_campaigns()
+        return campaigns
+    except Exception as e:
+        logger.error(f"Error listing campaigns: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/campaigns")
+async def create_campaign(campaign_data: dict):
+    """Create a new campaign"""
+    try:
+        db_manager = DatabaseManager()
+        campaign_id = db_manager.create_campaign(
+            name=campaign_data.get('name'),
+            description=campaign_data.get('description', '')
+        )
+        
+        # Return the created campaign
+        campaign = db_manager.get_campaign(campaign_id)
+        return campaign
+    except Exception as e:
+        logger.error(f"Error creating campaign: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/campaign/{campaign_id}/state")
+async def get_campaign_state(campaign_id: str):
+    """Get the current state of a campaign for UI display"""
+    try:
+        db_manager = DatabaseManager()
+        
+        # Get basic campaign info
+        campaign = db_manager.get_campaign(uuid.UUID(campaign_id))
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        # Get character and location (assuming player character is the first one)
+        characters = db_manager.get_characters_by_campaign(uuid.UUID(campaign_id))
+        locations = db_manager.get_locations_by_campaign(uuid.UUID(campaign_id))
+        items = db_manager.get_items_by_campaign(uuid.UUID(campaign_id))
+        quests = db_manager.get_quests_by_campaign(uuid.UUID(campaign_id))
+        
+        # Get stats - we'll use a simplified example
+        stats = {
+            "strength": 10,
+            "dexterity": 12,
+            "constitution": 8,
+            "intelligence": 14,
+            "wisdom": 13,
+            "charisma": 9
+        }
+        
+        # Get the current location (simplified)
+        location = locations[0] if locations else None
+        
+        return {
+            "name": campaign.name,
+            "stats": stats,
+            "inventory": [
+                {"name": item.name, "description": item.description}
+                for item in items
+            ],
+            "location": {
+                "name": location.name if location else "Unknown Location",
+                "description": location.description if location else ""
+            } if location or locations else None,
+            "characters": [
+                {"name": char.name, "description": char.description}
+                for char in characters
+            ],
+            "quests": [
+                {"name": quest.name, "description": quest.description}
+                for quest in quests
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting campaign state: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/debug/state")
+async def get_debug_state(campaign_id: str):
+    """
+    Debug endpoint showing the fully assembled prompt sent to the Narrator,
+    the raw JSON returned by the Extractor, and any proposals rejected by validator.
+    
+    This endpoint is hidden from normal UI access but available for developers
+    during development.
+    
+    Args:
+        campaign_id (str): The ID of the campaign to debug
+        
+    Returns:
+        Dict: Debug information including prompts, extractions and rejections
+    """
+    try:
+        db_manager = DatabaseManager()
+        
+        # Get recent turns with their details
+        recent_turns = await db_manager.get_recent_turns_with_details(uuid.UUID(campaign_id), 5)
+        
+        debug_data = {
+            "campaign_id": campaign_id,
+            "last_turns": [
+                {
+                    "turn_id": turn["turn_id"],
+                    "prompt": turn["prompt"],
+                    "timestamp": turn["timestamp"]
+                }
+                for turn in recent_turns
+            ],
+            "extractor_results": [
+                {
+                    "turn_id": turn["turn_id"],
+                    "extraction_data": turn["extraction_data"]
+                }
+                for turn in recent_turns
+            ],
+            "rejected_proposals": []  # In a real implementation this would come from validation/rejection logic
+        }
+        
+        return debug_data
+    except Exception as e:
+        logger.error(f"Debug endpoint error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+@app.get("/")
+async def read_root():
+    return FileResponse("app/static/index.html")
 
 if __name__ == "__main__":
     import uvicorn

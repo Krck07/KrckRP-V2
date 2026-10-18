@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KrckRP - AI RPG Engine</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- Campaign Selection Screen -->
+    <div id="campaign-selection-screen" class="screen active">
+        <h1>KrckRP Campaigns</h1>
+        <div id="campaign-list" class="campaign-grid">
+            <!-- Campaigns will be loaded here dynamically -->
+        </div>
+        <button id="new-campaign-btn">Create New Campaign</button>
+    </div>
+
+    <!-- Main Game UI -->
+    <div id="game-ui" class="screen hidden">
+        <!-- Sidebar with persistent info -->
+        <aside id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <h2>Campaign Info</h2>
+                <button id="back-to-menu-btn">← Menu</button>
+            </div>
+            
+            <div id="campaign-state" class="sidebar-content">
+                <!-- Campaign state will be loaded here -->
+            </div>
+        </aside>
+
+        <!-- Main content area -->
+        <main id="main-content" class="main-content">
+            <section id="chat-pane" class="chat-pane">
+                <div id="messages-container"></div>
+                <div id="typing-indicator" class="typing-indicator hidden">Narrator is typing...</div>
+            </section>
+
+            <section id="input-area" class="input-area">
+                <textarea id="user-input" placeholder="Enter your action or command..."></textarea>
+                <button id="send-btn">Send</button>
+            </section>
+        </main>
+    </div>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" class="overlay hidden">
+        <div class="spinner"></div>
+        <p>Loading...</p>
+    </div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>
