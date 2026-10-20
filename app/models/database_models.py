@@ -3,10 +3,14 @@ Database models for KrckRP engine.
 """
 
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 from sqlmodel import SQLModel, Field, Relationship, create_engine, Session
+import json
+import logging
+from uuid import UUID
+logger = logging.getLogger(__name__)
 
 
 # Base classes and relationships
@@ -14,7 +18,13 @@ class World(SQLModel, table=True):
     id: Optional[uuid.UUID] = Field(default=None, primary_key=True)
     name: str
     description: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    tone: Optional[str] = None  # JSON string of the tone data
+    factions: Optional[str] = None  # JSON string of factions list
+    locations: Optional[str] = None  # JSON string of locations list
+    characters: Optional[str] = None  # JSON string of characters list
+    abilities: Optional[str] = None  # JSON string of ability groups list
+    rules: Optional[str] = None  # JSON string of world rules
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Campaign(SQLModel, table=True):
@@ -22,8 +32,8 @@ class Campaign(SQLModel, table=True):
     world_id: uuid.UUID = Field(foreign_key="world.id")
     name: str
     description: str
-    world_clock: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    world_clock: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Session(SQLModel, table=True):
@@ -31,7 +41,9 @@ class Session(SQLModel, table=True):
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
     name: str
     description: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: Optional[datetime] = None  # When session officially begins
+    ended_at: Optional[datetime] = None   # When session ends
 
 
 class Character(SQLModel, table=True):
@@ -39,7 +51,7 @@ class Character(SQLModel, table=True):
     name: str
     description: str
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Location(SQLModel, table=True):
@@ -47,7 +59,7 @@ class Location(SQLModel, table=True):
     name: str
     description: str
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Item(SQLModel, table=True):
@@ -55,7 +67,7 @@ class Item(SQLModel, table=True):
     name: str
     description: str
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Faction(SQLModel, table=True):
@@ -63,7 +75,7 @@ class Faction(SQLModel, table=True):
     name: str
     description: str
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Ability(SQLModel, table=True):
@@ -71,7 +83,7 @@ class Ability(SQLModel, table=True):
     name: str
     description: str
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Quest(SQLModel, table=True):
@@ -79,14 +91,14 @@ class Quest(SQLModel, table=True):
     name: str
     description: str
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Summary(SQLModel, table=True):
     id: Optional[uuid.UUID] = Field(default=None, primary_key=True)
     content: str
     campaign_id: uuid.UUID = Field(foreign_key="campaign.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Relationship(SQLModel, table=True):
@@ -94,7 +106,7 @@ class Relationship(SQLModel, table=True):
     character_id: uuid.UUID = Field(foreign_key="character.id")
     related_character_id: uuid.UUID = Field(foreign_key="character.id")
     relationship_type: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class EventLog(SQLModel, table=True):
@@ -109,7 +121,7 @@ class EventLog(SQLModel, table=True):
     after_value: Optional[str] = None   # JSON string representation of the value after change
     sequence_num: int  # Order within a turn (for multiple changes to same entity)
     witness_metadata: str  # Additional context about who/when changed it
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class GameTurn(SQLModel, table=True):
@@ -120,8 +132,11 @@ class GameTurn(SQLModel, table=True):
     narrative: str
     extraction_data: str  # JSON string of the extracted data
     status: str 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     campaign_id: Optional[uuid.UUID] = Field(foreign_key="campaign.id")
+
+
+engine = create_engine("sqlite:///./test.db", echo=True)
 
 
 class DatabaseManager:
@@ -129,233 +144,46 @@ class DatabaseManager:
         """Initialize the database manager with a connection."""
         self.engine = create_engine(database_url, echo=True)
         
-    async def cleanup_session_entries(self, session_id: uuid.UUID) -> None:
+    async def log_event(self, event_log: EventLog) -> None:
         """
-        Cleanup vector entries associated with a specific session.
-        This is called as part of the rollback mechanism when sessions are rewound.
+        Log an event to the EventLog table.
         
         Args:
-            session_id (uuid.UUID): The session ID to clean up
-        """
-        from app.memory.semantic_memory import SemanticMemoryManager
-        semantic_manager = SemanticMemoryManager(self)
-        await semantic_manager.delete_session_entries(session_id)
-        
-    async def save_turn(self, game_turn: GameTurn) -> None:
-        """
-        Save a completed game turn to the database.
-        
-        Args:
-            game_turn (GameTurn): The game turn to save
-        """
-        with Session(self.engine) as session:
-            session.add(game_turn)
-            session.commit()
-            
-    async def get_turn(self, turn_id: str) -> Optional[GameTurn]:
-        """
-        Retrieve a specific game turn from the database.
-        
-        Args:
-            turn_id (str): The unique identifier of the turn
-            
-        Returns:
-            GameTurn or None if not found
-        """
-        with Session(self.engine) as session:
-            return session.query(GameTurn).filter(GameTurn.turn_id == turn_id).first()
-
-    async def get_recent_turns(self, campaign_id: uuid.UUID, limit: int = 10) -> List[GameTurn]:
-        """
-        Retrieve recent game turns for a campaign.
-        
-        Args:
-            campaign_id (uuid.UUID): The campaign ID to query
-            limit (int): Maximum number of turns to retrieve
-            
-        Returns:
-            List[GameTurn] ordered by turn_id ascending
-        """
-        with Session(self.engine) as session:
-            result = session.query(GameTurn).filter(
-                GameTurn.campaign_id == campaign_id,
-                GameTurn.turn_id > 0
-            ).order_by(GameTurn.turn_id.asc()).limit(limit)
-            
-            return list(result)
-    
-    async def get_recent_turns_with_details(self, campaign_id: uuid.UUID, limit: int = 10) -> List[Dict[str, Any]]:
-        """
-        Retrieve recent game turns for a campaign with detailed information.
-        
-        Args:
-            campaign_id (uuid.UUID): The campaign ID to query
-            limit (int): Maximum number of turns to retrieve
-            
-        Returns:
-            List[Dict] containing turn details including prompt and extraction data
+            event_log (EventLog): The event to log
         """
         try:
             with Session(self.engine) as session:
-                result = session.query(GameTurn).filter(
-                    GameTurn.campaign_id == campaign_id,
-                    GameTurn.turn_id > 0
-                ).order_by(GameTurn.turn_id.asc()).limit(limit)
-                
-                turns_data = []
-                for turn in result:
-                    try:
-                        extraction_data = json.loads(turn.extraction_data) if turn.extraction_data else {}
-                    except (json.JSONDecodeError, TypeError):
-                        extraction_data = {}
-                    
-                    turns_data.append({
-                        "turn_id": turn.turn_id,
-                        "timestamp": turn.timestamp.isoformat() if turn.timestamp else None,
-                        "prompt": turn.prompt,
-                        "narrative": turn.narrative,
-                        "extraction_data": extraction_data
-                    })
-                
-                return turns_data
+                session.add(event_log)
+                session.commit()
         except Exception as e:
-            logger.error(f"Error retrieving recent turns with details: {e}")
-            return []            
-    async def get_summary_by_campaign(self, campaign_id: uuid.UUID) -> Optional[Summary]:
+            logger.error(f"Error logging event: {e}")
+            raise
+        
+    async def get_events_for_session(self, session_id: UUID) -> List[EventLog]:
         """
-        Retrieve the most recent summary for a campaign.
+        Get all events for a specific session.
         
         Args:
-            campaign_id (uuid.UUID): The campaign ID to query
+            session_id (UUID): The session ID to query
             
         Returns:
-            Summary object or None if not found
+            List[EventLog]: The list of event logs
         """
-        with Session(self.engine) as session:
-            return session.query(Summary).filter(Summary.campaign_id == campaign_id).order_by(Summary.created_at.desc()).first()
-    async def get_all_turns(self) -> List[GameTurn]:
-        """
-        Retrieve all game turns from the database.
+        try:
+            with Session(self.engine) as session:
+                statement = SQLModel.select(EventLog).where(EventLog.session_id == session_id)
+                result = session.exec(statement)
+                return result.all()
+        except Exception as e:
+            logger.error(f"Error retrieving events: {e}")
+            raise
         
-        Returns:
-            List of GameTurn objects
+    async def create_tables(self) -> None:
         """
-        with Session(self.engine) as session:
-            return session.query(GameTurn).all()
-            
-    async def get_all_campaigns(self) -> List[Campaign]:
+        Create all database tables.
         """
-        Retrieve all campaigns from the database.
-        
-        Returns:
-            List of Campaign objects
-        """
-        with Session(self.engine) as session:
-            return session.query(Campaign).all()
-            
-    async def get_campaign(self, campaign_id: uuid.UUID) -> Optional[Campaign]:
-        """
-        Retrieve a specific campaign from the database.
-        
-        Args:
-            campaign_id (uuid.UUID): The ID of the campaign to retrieve
-            
-        Returns:
-            Campaign or None if not found
-        """
-        with Session(self.engine) as session:
-            return session.query(Campaign).filter(Campaign.id == campaign_id).first()
-            
-    async def create_campaign(self, name: str, description: str = '') -> uuid.UUID:
-        """
-        Create a new campaign in the database.
-        
-        Args:
-            name (str): Name of the campaign
-            description (str): Description of the campaign
-            
-        Returns:
-            UUID of the created campaign
-        """
-        # For now we'll create with a default world ID, but in reality this should be parameterized
-        world_id = uuid.uuid4()  # This is a simplified approach for demo purposes
-        
-        campaign = Campaign(
-            name=name,
-            description=description,
-            world_id=world_id
-        )
-        
-        with Session(self.engine) as session:
-            session.add(campaign)
-            session.commit()
-            session.refresh(campaign)
-            return campaign.id
-            
-    async def get_characters_by_campaign(self, campaign_id: uuid.UUID) -> List[Character]:
-        """
-        Get all characters associated with a specific campaign.
-        
-        Args:
-            campaign_id (uuid.UUID): The ID of the campaign
-            
-        Returns:
-            List of Character objects
-        """
-        with Session(self.engine) as session:
-            return session.query(Character).filter(Character.campaign_id == campaign_id).all()
-            
-    async def get_locations_by_campaign(self, campaign_id: uuid.UUID) -> List[Location]:
-        """
-        Get all locations associated with a specific campaign.
-        
-        Args:
-            campaign_id (uuid.UUID): The ID of the campaign
-            
-        Returns:
-            List of Location objects
-        """
-        with Session(self.engine) as session:
-            return session.query(Location).filter(Location.campaign_id == campaign_id).all()
-            
-    async def get_items_by_campaign(self, campaign_id: uuid.UUID) -> List[Item]:
-        """
-        Get all items associated with a specific campaign.
-        
-        Args:
-            campaign_id (uuid.UUID): The ID of the campaign
-            
-        Returns:
-            List of Item objects
-        """
-        with Session(self.engine) as session:
-            return session.query(Item).filter(Item.campaign_id == campaign_id).all()
-            
-    async def get_quests_by_campaign(self, campaign_id: uuid.UUID) -> List[Quest]:
-        """
-        Get all quests associated with a specific campaign.
-        
-        Args:
-            campaign_id (uuid.UUID): The ID of the campaign
-            
-        Returns:
-            List of Quest objects
-        """
-        with Session(self.engine) as session:
-            return session.query(Quest).filter(Quest.campaign_id == campaign_id).all()
-
-__all__ = [
-    "World",
-    "Campaign", 
-    "Session",
-    "Character",
-    "Location",
-    "Item",
-    "Faction",
-    "Ability",
-    "Quest",
-    "Summary",
-    "Relationship",
-    "EventLog",
-    "GameTurn"
-]
+        try:
+            SQLModel.metadata.create_all(self.engine)
+        except Exception as e:
+            logger.error(f"Error creating tables: {e}")
+            raise

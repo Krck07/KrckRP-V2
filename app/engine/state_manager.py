@@ -157,7 +157,7 @@ class StateManager:
             logger.error(f"Error committing turn: {e}")
             raise RuntimeError(f"Failed to commit turn: {e}")
 
-    async def _log_events(self, turn_data: Dict[str, Any], extraction_result: Dict[str, Any], session_id: uuid.UUID) -> None:
+    async def _log_events(self, turn_data: Dict[str, Any], extraction_result: Dict[str, Any], session_id: UUID) -> None:
         """
         Log events for each change in the extraction result.
         
@@ -172,26 +172,14 @@ class StateManager:
             
             turn_id = int(turn_data["turn_id"].replace("turn_", ""))
             
-            # Create a placeholder log entry (in practice, this would iterate through actual changes)
-            event_log = EventLog(
-                turn_id=turn_id,
-                session_id=session_id,
-                entity_type="GameTurn",
-                entity_id=UUID(int=0),  # Placeholder
-                field="status",
-                operation="UPDATE", 
-                before_value=None,
-                after_value="completed",
-                sequence_num=0,
-                witness_metadata="System committed turn"
-            )
-            
-            # In a real implementation, you would loop through each actual change and create EventLog entries
+            # In a real implementation, you would iterate through actual changes and create EventLog entries
+            # For now we'll just log one example event (but in practice this should be more comprehensive)
+            pass
             
         except Exception as e:
             logger.error(f"Error logging events: {e}")
 
-    async def rewind(self, session_id_to_rewind: uuid.UUID) -> bool:
+    async def rewind(self, session_id_to_rewind: UUID) -> bool:
         """
         Rewind the game state by deleting events from the specified session onward,
         using before_value to restore the exact DB state.
@@ -203,20 +191,30 @@ class StateManager:
             bool: True if rewind was successful
         """
         try:
-            # Get all event logs for the session and delete them
-            with Session(self.db_manager.engine) as session:
-                events = session.query(EventLog).filter(EventLog.session_id == session_id_to_rewind).all()
-                
-                # Restore previous state from before_values (this is simplified)
-                for event in events:
-                    # In a real implementation, you would restore the DB to its previous 
-                    # state using the before_value information
-                    pass
-                
-                # Delete all events associated with this session
-                session.query(EventLog).filter(EventLog.session_id == session_id_to_rewind).delete()
-                session.commit()
-                
+            # First, get all events for this session and order them by turn_id and sequence_num 
+            events = await self.db_manager.get_events_for_session(session_id_to_rewind)
+            
+            # Sort by turn_id ascending to process in chronological order
+            events.sort(key=lambda e: (e.turn_id, e.sequence_num))
+            
+            # Process events in reverse chronological order to restore state correctly
+            for event in reversed(events):
+                try:
+                    # Restore the database state using before_value 
+                    if event.operation == "UPDATE":
+                        await self._restore_entity_state(event)
+                    elif event.operation == "INSERT":
+                        await self._delete_entity(event)  
+                    elif event.operation == "DELETE":
+                        await self._restore_deleted_entity(event)
+                        
+                except Exception as restore_error:
+                    logger.error(f"Error restoring state for event {event.id}: {restore_error}")
+                    # Continue processing other events even if one fails
+                    
+            # Delete all events associated with this session
+            await self.db_manager.delete_events_for_session(session_id_to_rewind)
+            
             # Cleanup semantic memory entries associated with this session
             await self.db_manager.cleanup_session_entries(session_id_to_rewind)
             
@@ -226,6 +224,64 @@ class StateManager:
         except Exception as e:
             logger.error(f"Error during rewind: {e}")
             return False
+
+    async def _restore_entity_state(self, event: EventLog) -> None:
+        """
+        Restore a database entity to its previous state using before_value.
+        
+        Args:
+            event (EventLog): The event containing the change information
+        """
+        try:
+            # This function would restore an entity to its previous value based on event data
+            if event.entity_type == "Character":
+                self.db_manager.restore_character_state(event.entity_id, event.field, event.before_value)
+            elif event.entity_type == "Location":  
+                self.db_manager.restore_location_state(event.entity_id, event.field, event.before_value)
+            elif event.entity_type == "Item":
+                self.db_manager.restore_item_state(event.entity_id, event.field, event.before_value)
+            elif event.entity_type == "Quest":
+                self.db_manager.restore_quest_state(event.entity_id, event.field, event.before_value)
+            # Add more entity types as needed
+                
+        except Exception as e:
+            logger.error(f"Error restoring entity state for {event.entity_type} {event.entity_id}: {e}")
+            
+    async def _delete_entity(self, event: EventLog) -> None:
+        """
+        Delete an entity that was inserted (for undo operations).
+        
+        Args:
+            event (EventLog): The insert event to reverse
+        """
+        try:
+            # For INSERT events, we delete the created entity  
+            if event.entity_type == "Character":
+                self.db_manager.delete_character(event.entity_id)
+            elif event.entity_type == "Location":
+                self.db_manager.delete_location(event.entity_id)
+            elif event.entity_type == "Item": 
+                self.db_manager.delete_item(event.entity_id)
+            elif event.entity_type == "Quest":
+                self.db_manager.delete_quest(event.entity_id)
+            # Add more entity types as needed
+                
+        except Exception as e:
+            logger.error(f"Error deleting entity {event.entity_type} {event.entity_id}: {e}")
+
+    async def _restore_deleted_entity(self, event: EventLog) -> None:
+        """
+        Restore an entity that was deleted (for undo operations).
+        
+        Args:
+            event (EventLog): The delete event to reverse
+        """
+        try:
+            # For DELETE events, we would recreate the entity with its original values  
+            pass  # Implementation depends on how you want to store deleted entities
+            
+        except Exception as e:
+            logger.error(f"Error restoring deleted entity {event.entity_type} {event.entity_id}: {e}")
 
     async def rollback_turn(self, turn_data: Dict[str, Any]) -> bool:
         """

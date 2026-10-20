@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual Data Editor - KrckRP</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Manual Data Editor</h1>
+            <nav>
+                <a href="/">Back to Campaigns</a>
+                <a href="/static/world_form.html">World Form</a>
+                <a href="/static/character_creator.html">Character Creator</a>
+            </nav>
+        </header>
+
+        <main>
+            <div id="manualEditor" class="editor-container">
+                <h2>Edit Database Entities</h2>
+                
+                <div class="form-section">
+                    <h3>Session Management</h3>
+                    <button id="startSessionBtn">Start Session</button>
+                    <button id="endSessionBtn">End Session</button>
+                    
+                    <div id="sessionStatus" class="status-info"></div>
+                </div>
+
+                <div class="form-section">
+                    <h3>Correction Assistant Tools</h3>
+                    <p>Use the correction assistant to make safe manual changes:</p>
+                    
+                    <div class="tool-selector">
+                        <label for="toolSelect">Select Tool:</label>
+                        <select id="toolSelect">
+                            <option value="">-- Choose a tool --</option>
+                            <option value="move_character">Move Character</option>
+                            <option value="set_stat">Set Stat</option>
+                            <option value="give_item">Give Item</option>
+                            <option value="update_quest">Update Quest</option>
+                        </select>
+                    </div>
+                    
+                    <div id="toolParams" class="tool-params"></div>
+                    
+                    <button id="executeToolBtn">Execute Tool</button>
+                </div>
+
+                <div id="resultArea" class="result-area">
+                    <!-- Results will be displayed here -->
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>KrckRP - AI-Narrated Role-Playing Game</p>
+        </footer>
+    </div>
+
+    <script src="/static/js/manual_data_editor.js"></script>
+</body>
+</html>

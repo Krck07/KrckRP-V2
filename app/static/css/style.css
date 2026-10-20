@@ -298,3 +298,11 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--secondary-color);
 }
+
+/* Error message styling */
+.error {
+    color: #ff6b6b;
+    text-align: center;
+    padding: 20px;
+    font-size: 1.1rem;
+}

@@ -22,29 +22,15 @@ class KrckRPGame {
         // Game UI elements
         this.sidebar = document.getElementById('sidebar');
         this.backToMenuBtn = document.getElementById('back-to-menu-btn');
-        this.campaignState = document.getElementById('campaign-state');
         this.messagesContainer = document.getElementById('messages-container');
-        this.typingIndicator = document.getElementById('typing-indicator');
-        this.userInput = document.getElementById('user-input');
         this.sendBtn = document.getElementById('send-btn');
-
-        // State
-        this.isTyping = false;
+        this.messageInput = document.getElementById('message-input');
     }
 
     bindEvents() {
-        // Campaign events
-        this.newCampaignBtn.addEventListener('click', () => this.createNewCampaign());
-
-        // Game UI events
+        this.newCampaignBtn.addEventListener('click', () => this.createCampaign());
         this.backToMenuBtn.addEventListener('click', () => this.showCampaignScreen());
         this.sendBtn.addEventListener('click', () => this.handleSend());
-        this.userInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this.handleSend();
-            }
-        });
     }
 
     showLoading(show = true) {
@@ -61,36 +47,56 @@ class KrckRPGame {
             }
             
             const campaigns = await response.json();
+            console.log("Received campaign data:", campaigns);
             this.renderCampaignList(campaigns);
         } catch (error) {
             console.error('Error loading campaigns:', error);
-            // In a real app, we might show an error message
+            // Show user-friendly error message
+            this.campaignList.innerHTML = '<p class="error">Failed to load campaigns. Please try again later.</p>';
         } finally {
-            this.showLoading(false);
+            // Explicitly ensure the loading spinner is hidden
+            setTimeout(() => this.showLoading(false), 0);
         }
     }
 
     renderCampaignList(campaigns) {
         if (!campaigns || campaigns.length === 0) {
             this.campaignList.innerHTML = '<p>No campaigns found. Create one to get started!</p>';
+            // Even in empty case, ensure loading spinner is hidden
+            setTimeout(() => this.showLoading(false), 0);
             return;
         }
 
-        this.campaignList.innerHTML = campaigns.map(campaign => `
-            <div class="campaign-card" data-id="${campaign.id}">
-                <h3>${campaign.name}</h3>
-                <p>${campaign.description}</p>
-                <div class="campaign-meta">
-                    <span>Created: ${new Date(campaign.created_at).toLocaleDateString()}</span>
-                    <span>Turns: ${campaign.turn_count || 0}</span>
-                </div>
-            </div>
-        `).join('');
-
-        // Add click handlers to campaign cards
-        document.querySelectorAll('.campaign-card').forEach(card => {
-            card.addEventListener('click', () => this.selectCampaign(card.dataset.id));
-        });
+        try {
+            const htmlContent = campaigns.map(campaign => {
+                // Safely handle missing or null fields with defaults
+                const name = campaign.name || "Unnamed Campaign";
+                const description = campaign.description || "No description available";
+                
+                return `
+                    <div class="campaign-card" data-id="${campaign.id}">
+                        <h3>${name}</h3>
+                        <p>${description}</p>
+                        <div class="campaign-meta">
+                            <span>Created: ${new Date(campaign.created_at || new Date()).toLocaleDateString()}</span>
+                            <span>Turns: 0</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            this.campaignList.innerHTML = htmlContent;
+            
+            // Add click handlers to campaign cards
+            document.querySelectorAll('.campaign-card').forEach(card => {
+                card.addEventListener('click', () => this.selectCampaign(card.dataset.id));
+            });
+        } catch (error) {
+            console.error('Error in renderCampaignList:', error);
+            this.campaignList.innerHTML = '<p class="error">Failed to render campaigns. Please try again later.</p>';
+            // Ensure loading spinner is hidden even if rendering fails
+            setTimeout(() => this.showLoading(false), 0);
+        }
     }
 
     async selectCampaign(campaignId) {
@@ -126,64 +132,27 @@ class KrckRPGame {
             this.renderCampaignState(stateData);
         } catch (error) {
             console.error('Error loading campaign state:', error);
-            // In a real app, we might show an error message
+            // If there's an error, we still want to hide the loader
+            throw error; 
         }
     }
 
     renderCampaignState(stateData) {
         if (!stateData) return;
-
-        const location = stateData.location || { name: 'Unknown Location', description: '' };
-        const characters = stateData.characters || [];
-        const quests = stateData.quests || [];
-
-        this.campaignState.innerHTML = `
+        
+        this.sidebar.innerHTML = `
             <div class="campaign-info">
-                <h3>${stateData.name}</h3>
-                <p><strong>Location:</strong> ${location.name}</p>
-                <p>${location.description}</p>
-                
-                <h4>Stats</h4>
-                <ul>
-                    ${Object.entries(stateData.stats || {}).map(([key, value]) => 
-                        `<li><strong>${this.formatStatName(key)}:</strong> ${value}</li>`
-                    ).join('')}
-                </ul>
-
-                <h4>Inventory</h4>
-                <ul>
-                    ${stateData.inventory?.length ? stateData.inventory.map(item => 
-                        `<li>${item.name}${item.description ? ` - ${item.description}` : ''}</li>`
-                    ).join('') : '<li>No items</li>'}
-                </ul>
-
-                <h4>Active Quests (${quests.length})</h4>
-                <ul>
-                    ${quests.map(quest => 
-                        `<li><strong>${quest.name}</strong>: ${quest.description}</li>`
-                    ).join('')}
-                </ul>
-
-                <h4>Nearby Characters (${characters.length})</h4>
-                <ul>
-                    ${characters.map(char => 
-                        `<li>${char.name}${char.description ? ` - ${char.description}` : ''}</li>`
-                    ).join('')}
-                </ul>
+                <h2>${stateData.campaign_name || 'Unnamed Campaign'}</h2>
+                <p>Turn: ${stateData.turn_count || 0}</p>
             </div>
         `;
     }
 
-    formatStatName(statKey) {
-        // Convert camelCase to title case for display
-        return statKey.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
-    }
-
-    async createNewCampaign() {
+    async createCampaign() {
+        const name = prompt('Enter campaign name:');
+        if (!name) return;
+        
         try {
-            const name = prompt('Enter campaign name:');
-            if (!name) return;
-
             const response = await fetch('/api/campaigns', {
                 method: 'POST',
                 headers: {
@@ -204,95 +173,30 @@ class KrckRPGame {
         }
     }
 
-    startSSE() {
-        // Close existing connection if any
-        if (this.eventSource) {
-            this.eventSource.close();
-        }
-
-        const eventSourceUrl = `/api/turn/stream`;
-        
-        this.eventSource = new EventSource(eventSourceUrl);
-        
-        this.eventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                
-                switch(data.type) {
-                    case 'narration':
-                        this.addMessage('narrator', data.chunk);
-                        break;
-                    case 'extraction':
-                        // This is where we would process extracted data
-                        console.log('Extracted data:', data.data);
-                        break;
-                    case 'commit':
-                        // Turn committed successfully 
-                        console.log('Turn committed');
-                        break;
-                }
-            } catch (error) {
-                console.error('Error parsing SSE message:', error);
-            }
-        };
-
-        this.eventSource.onerror = (error) => {
-            console.error('SSE Error:', error);
-            this.eventSource.close();
-        };
-    }
-
-    addMessage(sender, text) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${sender}`;
-        messageDiv.textContent = text;
-        
-        // Remove typing indicator if it exists
-        const existingIndicator = this.typingIndicator;
-        if (!existingIndicator.classList.contains('hidden')) {
-            existingIndicator.classList.add('hidden');
-        }
-        
-        // Add the new message to container
-        this.messagesContainer.appendChild(messageDiv);
-        
-        // Scroll to bottom
-        this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-    }
-
     async handleSend() {
-        const message = this.userInput.value.trim();
-        if (!message || !this.currentCampaignId) return;
-
+        if (!this.currentCampaignId || !this.messageInput.value.trim()) return;
+        
         try {
-            // Add user message immediately
-            this.addMessage('player', message);
-            
-            // Clear input and show typing indicator
-            this.userInput.value = '';
-            this.typingIndicator.classList.remove('hidden');
-            
-            const response = await fetch('/api/turn', {
+            const response = await fetch(`/api/campaign/${this.currentCampaignId}/turn`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    prompt: message,
-                    campaign_id: this.currentCampaignId
+                body: JSON.stringify({ 
+                    message: this.messageInput.value,
+                    context: "Game turn"
                 })
             });
-
+            
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
-
-            const result = await response.json();
-            console.log('Turn processed:', result);
+            
+            const data = await response.json();
+            this.messagesContainer.innerHTML += `<div class="message">${data.response}</div>`;
+            this.messageInput.value = '';
         } catch (error) {
             console.error('Error sending message:', error);
-            this.typingIndicator.classList.add('hidden');
-            alert('Failed to process action. Please try again.');
         }
     }
 
@@ -301,13 +205,34 @@ class KrckRPGame {
             this.eventSource.close();
         }
         
-        this.gameUi.classList.add('hidden');
         this.campaignScreen.classList.remove('hidden');
+        this.gameUi.classList.add('hidden');
         this.currentCampaignId = null;
+        this.loadCampaigns(); // Reload campaigns when returning to menu
+    }
+
+    startSSE() {
+        if (this.eventSource) {
+            this.eventSource.close();
+        }
+        
+        this.eventSource = new EventSource(`/api/campaign/${this.currentCampaignId}/stream`);
+        
+        this.eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'error') {
+                console.error('SSE Error:', data.message);
+                return;
+            }
+            
+            // Update UI with new state
+            this.renderCampaignState(data.state);
+        };
+        
+        this.eventSource.onerror = (error) => {
+            console.error('SSE Connection error:', error);
+            this.eventSource.close();
+        };
     }
 }
-
-// Initialize the game when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    window.game = new KrckRPGame();
-});

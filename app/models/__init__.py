@@ -17,9 +17,10 @@ from .database_models import (
     Relationship,
     EventLog
 )
+from .world_models import WorldTemplate, WORLD_SCHEMA
 
 __all__ = [
-    "World",
+    "WorldTemplate",
     "Campaign", 
     "Session",
     "Character",
@@ -30,5 +31,6 @@ __all__ = [
     "Quest",
     "Summary",
     "Relationship",
-    "EventLog"
+    "EventLog",
+    "WORLD_SCHEMA"
 ]
